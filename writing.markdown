@@ -1,5 +1,6 @@
 ## 데이터 마트를 통한 데이터 추출 요청 처리 (더 알맞은 제목으로 수정 필요) 
 
+---
 ### 개요
 스타트업 데이터 팀에서 일하다보면 타 부서의 데이터 추출 요청을 정말 많이 받게됩니다.  
 저희 회사의 경우 최근에 빅쿼리(BigQuery)를 이용한 데이터 웨어하우징 시스템을 도입했습니다. 빅쿼리는 구글에서 제공하는 데이터 저장 및 분석용 클라우드 서비스입니다. 일반적인 데이터베이스 시스템보다 훨씬 빠른 쿼리 처리 속도를 자랑하는 시스템이죠.
@@ -21,19 +22,19 @@ with date_raw as (
   from unnest(generate_date_array('2021-10-01', '2021-10-30', interval 1 day)) dt
 )
 , purchase_raw as (
-  select hostId, paid
+  select hostId, paid -- paid: 결제 완료 시점
   from `purchase`
 )
 , host_raw as (
   select id, date(created) created
   from `host`
 )
-, date_host_raw as ( -- 각 날짜별 생성된 호스트
+, date_host_raw as (
   select d.*, h.id
   from date_raw d
   cross join host_raw h
 )
-, date_join_host_raw as ( -- 호스트별 존재했던 날짜만 남김 (설정한 date range에서)
+, date_join_host_raw as (
   select distinct  r.*
   from date_host_raw r
   left join host_raw h on r.id=h.id and r.Date_Ranges >= h.created
@@ -60,7 +61,7 @@ with date_raw as (
 , purchase_converted_host as (
   select Date_Ranges, count(distinct hostId) as conversion_cnt 
   from (
-    -- 0건인 호스트가 다음날 결제한 호스트만 남김
+    -- 누적판매 0건인 호스트 중 다음날 결제가 발생한 호스트
     select (Date_Ranges+1) as Date_Ranges, h.hostId, p.hostId as p_host, paid
     from unsold_host_raw h
     left join purchase_raw p on h.hostId = p.hostId and h.Date_Ranges+1 = date(paid)
@@ -79,6 +80,17 @@ from unsold_host_cnt u
 left join purchase_converted_host p on u.date = p.Date_Ranges
 order by 1
 ```
+
+위 SQL에서는 데이터 추출을 위해 조회하고자 하는 날짜 테이블과의 **크로스 조인**을 이용해 인위적으로 일자별 누적 테이블을 만들어 처리해주었습니다. 
+`date_join_host_raw`를 만들 때 크로스 조인을 한 테이블과 원본 호스트 테이블을 left join 하는데, 이 과정에서 `r.Date_Ranges >= h.created`라는 조건을 걸어줌으로써 각 호스트가 생성 이후 존재했던 모든 날짜에 매핑된 테이블이 완성됩니다. 
+// purchase도 설명
+// 결과 설명 및 테이블 예시 보여주기
+
+위의 SQL 쿼리를 이용한 방식의 문제는 크로스 조인을 사용한다는 점입니다. 크로스 조인은 테이블을 엄청나게 뻥튀기해 처리하는 방식이기 때문에 컴퓨팅 파워도 많이 들고 한번 처리할 때 시간이 오래 걸리기 때문입니다. 
+
+이런 문제를 해결하는 방법은 다양하겠지만, 오늘 소개해드릴 방법은 아주 약간의 데이터 엔지니어링을 섞은 해결책입니다. 
+
+// 관리가 복잡해지기 때문에 모든 상황에 적용할 수는 없습니다. 그러나 해당 데이터를 주기적으로 사용할 예정이라면 위 방식처럼 데이터 마트(?!)를 만드는 것도 하나의 좋은 해결책이라고 생각됩니다. 마트에는 간단한 코드를 이용해 메타데이터를 상황에 맞게 추가할 수도 있기 때문에 한번 만들어 놓으면 여러 모로 확장성이 
 
 
 결론
